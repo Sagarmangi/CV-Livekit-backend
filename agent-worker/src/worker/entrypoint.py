@@ -50,7 +50,7 @@ logger = logging.getLogger("worker.entrypoint")
 # Text-stream topic the dashboard's test panel listens on -- see
 # dashboard/app/(protected)/agents/[agentId]/test-panel.tsx. Keep the string
 # identical in both places; it's the only contract between them.
-DIAGNOSTIC_TOPIC = "kodexo.diagnostic"
+DIAGNOSTIC_TOPIC = "codeora.diagnostic"
 
 # Ceiling on how long the session will wait for the caller to be finished, when
 # Flux's end-of-turn confidence stays low. Not a dashboard setting -- the floor

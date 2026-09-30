@@ -1,11 +1,11 @@
-# Kodexo Voice Agent -- Backend
+# Codeora Vision Voice Agent -- Backend
 
 Self-hosted, LiveKit-based inbound voice-AI platform: the Python (LiveKit
 Agents SDK) worker that answers real calls via Twilio SIP trunking, the
 self-hosted LiveKit + SIP infra it runs on, and the database schema both this
 worker and the dashboard depend on.
 
-The admin dashboard (Next.js) lives in a separate repo: [livekit_frontend](https://github.com/aiautomationkodexo/livekit_frontend).
+The admin dashboard (Next.js) lives in a separate repo: [CV-Livekit-frontend](https://github.com/Sagarmangi/CV-Livekit-frontend).
 
 - `agent-worker/` -- Python LiveKit agent worker (STT -> LLM -> TTS call flow)
 - `infra/` -- self-hosted LiveKit + SIP bridge (docker-compose), deploy and backup scripts
@@ -16,9 +16,9 @@ The admin dashboard (Next.js) lives in a separate repo: [livekit_frontend](https
 On a fresh VPS:
 
 ```bash
-sudo mkdir -p /opt/kodexo && sudo chown -R "$USER:$USER" /opt/kodexo
-git clone https://github.com/alihamza-kodexo/livekit_backend.git /opt/kodexo/backend
-/opt/kodexo/backend/infra/deploy/bootstrap.sh
+sudo mkdir -p /opt/codeora && sudo chown -R "$USER:$USER" /opt/codeora
+git clone https://github.com/Sagarmangi/CV-Livekit-backend.git /opt/codeora/backend
+/opt/codeora/backend/infra/deploy/bootstrap.sh
 ```
 
 It does everything mechanical and stops with an exact instruction whenever it
@@ -54,7 +54,7 @@ Set `SUPABASE_DB_URL` and `ADMIN_EMAIL` on a fresh Supabase project, then run
 the command above. All 26 migrations apply in order in one pass -- there is no
 file-by-file pasting into the SQL editor.
 
-`ADMIN_EMAIL` matters: migrations 0003/0004 seed Kodexo's own addresses into
+`ADMIN_EMAIL` matters: migrations 0003/0004 seed the original team's addresses into
 `allowed_users`, so without it nobody at the new deployment can sign in to the
 dashboard. Those two seeded addresses also arrive with the migrations -- for a
 deployment that isn't ours, remove them afterwards:

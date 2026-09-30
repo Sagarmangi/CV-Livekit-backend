@@ -1,5 +1,5 @@
 [project]
-name = "kodexo-voice-agent-worker"
+name = "codeora-voice-agent-worker"
 version = "0.1.0"
 description = "LiveKit agent worker: STT (Deepgram) -> LLM (Groq) -> TTS (Deepgram Aura) inbound sales-qualification voice agent"
 requires-python = ">=3.11"

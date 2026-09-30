@@ -80,7 +80,7 @@ Point it at this server (swap in the real host once it's reachable — use
 `ws://<vps-ip>:7880` for a first local test, `wss://...` once TLS is set up):
 
 ```bash
-lk project add kodexo-voice --url ws://<vps-ip-or-domain>:7880 --api-key $LIVEKIT_API_KEY --api-secret $LIVEKIT_API_SECRET
+lk project add codeora-voice --url ws://<vps-ip-or-domain>:7880 --api-key $LIVEKIT_API_KEY --api-secret $LIVEKIT_API_SECRET
 ```
 
 Create the trunk and dispatch rule from the example files in `sip/` (edit the

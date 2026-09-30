@@ -3,9 +3,9 @@
 ## The short way
 
 ```bash
-sudo mkdir -p /opt/kodexo && sudo chown -R "$USER:$USER" /opt/kodexo
-git clone https://github.com/alihamza-kodexo/livekit_backend.git /opt/kodexo/backend
-/opt/kodexo/backend/infra/deploy/bootstrap.sh
+sudo mkdir -p /opt/codeora && sudo chown -R "$USER:$USER" /opt/codeora
+git clone https://github.com/Sagarmangi/CV-Livekit-backend.git /opt/codeora/backend
+/opt/codeora/backend/infra/deploy/bootstrap.sh
 ```
 
 `bootstrap.sh` does everything mechanical — venv, LiveKit and Redis secrets,
@@ -42,7 +42,7 @@ SIP layer in more depth, and `README.md` covers database setup on its own.
 | Supabase | Postgres — schema and all call data | hosted (supabase.com) |
 | `infra/` | LiveKit media server, SIP bridge, Redis, egress | Docker, on the VPS |
 | `agent-worker/` | Python worker that answers calls | systemd, on the VPS |
-| `dashboard/` | Next.js admin UI ([livekit_frontend](https://github.com/aiautomationkodexo/livekit_frontend)) | Node behind nginx, on the VPS |
+| `dashboard/` | Next.js admin UI ([CV-Livekit-frontend](https://github.com/Sagarmangi/CV-Livekit-frontend)) | Node behind nginx, on the VPS |
 
 ---
 
@@ -66,16 +66,16 @@ root.** Step 4 explains why in detail.
 ## 1. Clone the repos
 
 ```bash
-sudo mkdir -p /opt/kodexo && sudo chown -R "$USER:$USER" /opt/kodexo
-cd /opt/kodexo
-git clone https://github.com/alihamza-kodexo/livekit_backend.git backend
-git clone https://github.com/aiautomationkodexo/livekit_frontend.git dashboard
+sudo mkdir -p /opt/codeora && sudo chown -R "$USER:$USER" /opt/codeora
+cd /opt/codeora
+git clone https://github.com/Sagarmangi/CV-Livekit-backend.git backend
+git clone https://github.com/Sagarmangi/CV-Livekit-frontend.git dashboard
 ```
 
 The dashboard is a separate repo on purpose. `backend/.gitignore` excludes
 `/dashboard/`, so the two never fight over the same files.
 
-**Check:** `ls /opt/kodexo/backend/agent-worker` shows `src`, `pyproject.toml`.
+**Check:** `ls /opt/codeora/backend/agent-worker` shows `src`, `pyproject.toml`.
 
 ---
 
@@ -85,7 +85,7 @@ This is one command now — there is no pasting migration files into the SQL
 editor.
 
 ```bash
-cd /opt/kodexo/backend/agent-worker
+cd /opt/codeora/backend/agent-worker
 python3 -m venv .venv
 .venv/bin/pip install -e . --quiet
 cp .env.example .env.local
@@ -127,7 +127,7 @@ this records the migrations without running them:
 .venv/bin/python -m worker.migrate --adopt
 ```
 
-**One thing to do by hand:** migrations 0003/0004 seed Kodexo's own addresses
+**One thing to do by hand:** migrations 0003/0004 seed the original team's addresses
 into `allowed_users`. For a deployment that isn't ours, remove them:
 
 ```sql
@@ -144,7 +144,7 @@ does not create the login.
 ## 3. Start LiveKit, SIP and Redis
 
 ```bash
-cd /opt/kodexo/backend/infra
+cd /opt/codeora/backend/infra
 cp .env.example .env
 openssl rand -hex 16   # -> LIVEKIT_API_KEY
 openssl rand -hex 32   # -> LIVEKIT_API_SECRET
@@ -180,9 +180,9 @@ you anything else.
 ## 4. Install the deploy script
 
 ```bash
-mkdir -p /opt/kodexo/deploy
-ln -sf /opt/kodexo/backend/infra/deploy/deploy-backend.sh \
-       /opt/kodexo/deploy/deploy-backend.sh
+mkdir -p /opt/codeora/deploy
+ln -sf /opt/codeora/backend/infra/deploy/deploy-backend.sh \
+       /opt/codeora/deploy/deploy-backend.sh
 ```
 
 A symlink, so `git pull` updates the script itself.
@@ -193,16 +193,16 @@ A symlink, so `git pull` updates the script itself.
 > unprivileged pull dies with *"insufficient permission for adding an object to
 > repository database"* — which reads like a git bug and is really this. The
 > script now refuses to start as root for exactly that reason. If it has
-> already happened: `sudo chown -R "$USER:$USER" /opt/kodexo/backend`.
+> already happened: `sudo chown -R "$USER:$USER" /opt/codeora/backend`.
 
 The deploy user needs passwordless sudo for just two commands:
 
 ```bash
-sudo visudo -f /etc/sudoers.d/kodexo-deploy
+sudo visudo -f /etc/sudoers.d/codeora-deploy
 ```
 
 ```
-deploy ALL=(root) NOPASSWD: /bin/systemctl restart kodexo-worker, /usr/bin/docker compose *
+deploy ALL=(root) NOPASSWD: /bin/systemctl restart codeora-worker, /usr/bin/docker compose *
 ```
 
 ---
@@ -224,16 +224,16 @@ hand a shed call to, so refusing one means the phone just rings out.
 Create the service:
 
 ```bash
-sudo tee /etc/systemd/system/kodexo-worker.service >/dev/null <<'UNIT'
+sudo tee /etc/systemd/system/codeora-worker.service >/dev/null <<'UNIT'
 [Unit]
-Description=Kodexo voice agent worker
+Description=Codeora Vision voice agent worker
 After=network-online.target docker.service
 
 [Service]
 Type=simple
 User=deploy
-WorkingDirectory=/opt/kodexo/backend/agent-worker
-ExecStart=/opt/kodexo/backend/agent-worker/.venv/bin/python -m worker.entrypoint start
+WorkingDirectory=/opt/codeora/backend/agent-worker
+ExecStart=/opt/codeora/backend/agent-worker/.venv/bin/python -m worker.entrypoint start
 Restart=always
 RestartSec=5
 
@@ -241,7 +241,7 @@ RestartSec=5
 WantedBy=multi-user.target
 UNIT
 sudo systemctl daemon-reload
-sudo systemctl enable --now kodexo-worker
+sudo systemctl enable --now codeora-worker
 ```
 
 `WorkingDirectory` is **not** cosmetic. The worker loads config with
@@ -251,8 +251,8 @@ wrong it reads no config at all and every key looks unset.
 **Check:**
 
 ```bash
-systemctl status kodexo-worker --no-pager
-journalctl -u kodexo-worker -n 30
+systemctl status codeora-worker --no-pager
+journalctl -u codeora-worker -n 30
 ```
 
 You want `registered worker` in the log and no traceback.
@@ -262,7 +262,7 @@ You want `registered worker` in the log and no traceback.
 ## 6. Start the dashboard
 
 ```bash
-cd /opt/kodexo/dashboard
+cd /opt/codeora/dashboard
 cp .env.example .env.local     # then fill it in
 npm ci && npm run build
 npm run start -- -p 3001 &     # use pm2 or a systemd unit for real
@@ -297,7 +297,7 @@ Then, before you dial, in the dashboard:
 Now call the number and watch:
 
 ```bash
-journalctl -u kodexo-worker -f
+journalctl -u codeora-worker -f
 ```
 
 **Check, in order:** the agent greets you · `call end claimed: ended_by=…` when
@@ -309,7 +309,7 @@ captured a name or a need.
 ## Deploying a change, from here on
 
 ```bash
-/opt/kodexo/deploy/deploy-backend.sh
+/opt/codeora/deploy/deploy-backend.sh
 ```
 
 It pulls `main`, and if `agent-worker/` or `supabase/` changed it installs,
@@ -342,10 +342,10 @@ restart its process.
 Useful commands:
 
 ```bash
-journalctl -u kodexo-worker -f                        # live worker log
-journalctl -u kodexo-worker | grep -iE 'slack|lead'   # why no alert
+journalctl -u codeora-worker -f                        # live worker log
+journalctl -u codeora-worker | grep -iE 'slack|lead'   # why no alert
 .venv/bin/python -m worker.migrate --dry-run          # schema drift
-docker compose -f /opt/kodexo/backend/infra/docker-compose.yml ps
+docker compose -f /opt/codeora/backend/infra/docker-compose.yml ps
 nproc; free -m; uptime                                # is the box coping
 ```
 

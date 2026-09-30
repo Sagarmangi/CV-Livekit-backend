@@ -2,17 +2,17 @@
 #
 # Pull main and restart whatever changed. Run on the VPS as the deploy user:
 #
-#     /opt/kodexo/deploy/deploy-backend.sh
+#     /opt/codeora/deploy/deploy-backend.sh
 #
 # This lives in the repo so its failure modes are visible to anyone reading the
 # code. Install it by symlinking, so a `git pull` updates it too:
 #
-#     ln -sf /opt/kodexo/backend/infra/deploy/deploy-backend.sh \
-#            /opt/kodexo/deploy/deploy-backend.sh
+#     ln -sf /opt/codeora/backend/infra/deploy/deploy-backend.sh \
+#            /opt/codeora/deploy/deploy-backend.sh
 #
 set -euo pipefail
 
-REPO=/opt/kodexo/backend
+REPO=/opt/codeora/backend
 WORKER="$REPO/agent-worker"
 
 # NEVER run this with sudo.
@@ -63,7 +63,7 @@ if echo "$CHANGED" | grep -qE '^(agent-worker|supabase)/'; then
   # .env.example, and mind the URL-encoding note there.
   .venv/bin/python -m worker.migrate
 
-  sudo -n systemctl restart kodexo-worker
+  sudo -n systemctl restart codeora-worker
   echo "worker restarted"
 fi
 

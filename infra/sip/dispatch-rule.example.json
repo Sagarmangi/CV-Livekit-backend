@@ -8,7 +8,7 @@
   "roomConfig": {
     "agents": [
       {
-        "agentName": "kodexo-inbound-agent"
+        "agentName": "codeora-inbound-agent"
       }
     ]
   },
