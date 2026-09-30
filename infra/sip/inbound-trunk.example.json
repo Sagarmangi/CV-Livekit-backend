@@ -1,0 +1,7 @@
+{
+  "trunk": {
+    "name": "Twilio inbound trunk",
+    "numbers": ["+15105550100"],
+    "krispEnabled": true
+  }
+}

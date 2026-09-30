@@ -1,0 +1,40 @@
+# dashboard/ is its own separate git repo (pushed to livekit_frontend) --
+# excluded here so this repo (livekit_backend) doesn't duplicate it.
+/dashboard/
+
+# Secrets -- never commit real credentials. .env.example files are templates
+# and stay tracked.
+.env
+.env.local
+!.env.example
+DEPLOYMENT_GUIDE.md
+
+# Dependencies
+node_modules/
+
+# Python
+agent-worker/.venv/
+__pycache__/
+*.pyc
+
+# Claude Code local session state.
+#
+# `.claude/*` rather than `.claude/`: git does not descend into an excluded
+# directory, so a negation inside one never matches. Excluding the contents
+# instead leaves the directory walkable, which is what lets skills/ come back.
+.claude/*
+# Skills are shared knowledge, not session state -- they belong to the team the
+# same way the docs do, and a skill only one person has is one nobody maintains.
+!.claude/skills/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Call recordings staged by the egress container before the worker uploads them
+# to Cloudinary and deletes them. Anything left here is customer call audio.
+infra/recordings/
+*.egg-info/

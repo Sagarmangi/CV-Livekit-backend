@@ -1,0 +1,118 @@
+services:
+  redis:
+    image: redis:7
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    # Bound to loopback only: livekit and sip run in host network mode and
+    # reach Redis over localhost. Never expose 6379 publicly.
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  livekit:
+    image: livekit/livekit-server:latest
+    network_mode: host
+    depends_on:
+      - redis
+    environment:
+      LIVEKIT_CONFIG: |
+        port: 7880
+        rtc:
+          tcp_port: 7881
+          port_range_start: 50000
+          port_range_end: 60000
+          use_external_ip: true
+        # Both default to minutes, which is far too long for a phone call: the
+        # worker ends its own job when the caller hangs up (see
+        # entrypoint.py::_end_job_when_caller_leaves), but if that job dies
+        # without running its shutdown callback, the room is what finally stops
+        # a still-running egress -- and until it does, that egress records
+        # silence and keeps a headless Chrome busy compositing it.
+        #
+        # departure_timeout applies once someone has joined and left, which is
+        # every real call; empty_timeout covers a room nobody ever reached.
+        room:
+          empty_timeout: 60
+          departure_timeout: 15
+        redis:
+          address: localhost:6379
+          password: ${REDIS_PASSWORD}
+        keys:
+          ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+    restart: unless-stopped
+
+  # Call recording, off unless the worker is started with
+  # CALL_RECORDING_ENABLED=true -- this container idles until asked for an
+  # egress, so leaving it running costs nothing but a few MB.
+  #
+  # It writes finished files into ./recordings, which the agent worker reads and
+  # uploads to Cloudinary (Egress itself can't upload there -- it only speaks S3,
+  # GCS, Azure and AliOSS). That bind mount is the contract between the two: the
+  # container's /out and the worker's RECORDING_OUTPUT_DIR must be the same
+  # directory, or every egress succeeds and the worker finds nothing.
+  #
+  # Worth knowing before switching recording on: an audio-only room composite
+  # still runs a headless Chrome per call. On a single box already hosting the
+  # SFU, the SIP bridge and the worker, that is real CPU contention -- and this
+  # deployment has measured load between 0.56 and 0.99 without it (see the
+  # worker's WORKER_LOAD_THRESHOLD notes). If reply latency matters, put egress
+  # on its own box and point EGRESS_CONFIG_BODY's ws_url at this one.
+  egress:
+    image: livekit/egress:latest
+    network_mode: host
+    depends_on:
+      - livekit
+    # Chrome needs a larger /dev/shm than Docker's 64MB default and the SYS_ADMIN
+    # capability for its sandbox; without both it crashes on start and every
+    # egress fails with no output.
+    shm_size: 1gb
+    cap_add:
+      - SYS_ADMIN
+    environment:
+      EGRESS_CONFIG_BODY: |
+        api_key: '${LIVEKIT_API_KEY}'
+        api_secret: '${LIVEKIT_API_SECRET}'
+        ws_url: 'ws://localhost:7880'
+        redis:
+          address: 'localhost:6379'
+          password: '${REDIS_PASSWORD}'
+        insecure: true
+        logging:
+          level: info
+    volumes:
+      # This directory has to be writable by the *container's* user, which is
+      # not root. If it doesn't exist when the mount is set up, Docker creates it
+      # root-owned and mode 755, and every egress then completes while writing
+      # nothing -- with the file_results filename still reported, which makes it
+      # look like a mount problem instead of a permission one. Create it first:
+      #
+      #   mkdir -p infra/recordings
+      #   sudo chown $(docker exec infra-egress-1 id -u) infra/recordings
+      #
+      # The worker runs as root, so it can read and delete regardless of owner.
+      - ./recordings:/out
+    restart: unless-stopped
+
+  sip:
+    image: livekit/sip:latest
+    network_mode: host
+    depends_on:
+      - livekit
+    environment:
+      SIP_CONFIG_BODY: |
+        api_key: '${LIVEKIT_API_KEY}'
+        api_secret: '${LIVEKIT_API_SECRET}'
+        ws_url: 'ws://localhost:7880'
+        redis:
+          address: 'localhost:6379'
+          password: '${REDIS_PASSWORD}'
+        sip_port: 5060
+        rtp_port: 10000-20000
+        use_external_ip: true
+        logging:
+          level: info
+    restart: unless-stopped
+
+volumes:
+  redis_data:

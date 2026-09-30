@@ -1,0 +1,22 @@
+# Line endings, pinned rather than left to each machine's core.autocrlf.
+#
+# 0019_agent_llm_provider_gemini.sql was committed with CRLF while the other 25
+# migrations are LF. Nothing cared until the migration runner started
+# checksumming those files: the same commit then hashed differently on a
+# Windows machine and on the Linux VPS, and every deploy reported drift on a
+# file nobody had touched. The runner now normalises line endings before
+# hashing, so this is belt and braces -- but a repo that carries one file in a
+# different encoding to its 25 siblings will find another way to be annoying.
+#
+# LF for everything textual, because that is what the VPS runs and what the
+# migration files are read by.
+* text=auto eol=lf
+
+# Binary, so git never tries to translate anything inside them.
+*.pdf binary
+*.docx binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

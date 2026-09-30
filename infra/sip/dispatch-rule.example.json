@@ -1,0 +1,16 @@
+{
+  "name": "Inbound calls to agent worker",
+  "rule": {
+    "dispatchRuleIndividual": {
+      "roomPrefix": "call-"
+    }
+  },
+  "roomConfig": {
+    "agents": [
+      {
+        "agentName": "kodexo-inbound-agent"
+      }
+    ]
+  },
+  "trunkIds": []
+}
