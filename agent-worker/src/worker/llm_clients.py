@@ -25,6 +25,23 @@ from __future__ import annotations
 from .settings import ProviderSettings
 
 
+def gemini_thinking_config(model: str):
+    """The lowest-reasoning ThinkingConfig the given Gemini text model accepts.
+
+    The two families disagree on the field: 2.x takes `thinking_budget` (0 turns
+    reasoning off), while 3.x rejects that and takes `thinking_level` instead.
+    LOW rather than MINIMAL because gemini-3.8-flash answers MINIMAL with a 400
+    ("Thinking level MINIMAL is not supported for this model"); LOW is the
+    lowest level it accepts.
+    """
+    from google.genai import types as genai_types
+
+    name = model.removeprefix("models/")
+    if name.startswith("gemini-2"):
+        return genai_types.ThinkingConfig(thinking_budget=0)
+    return genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.LOW)
+
+
 def build_utility_llm(provider_name: str, provider: ProviderSettings):
     """An LLM client for the worker's own use. `provider_name` is "deepseek" or
     "gemini"; anything else falls through to Gemini.
@@ -57,7 +74,6 @@ def build_utility_llm(provider_name: str, provider: ProviderSettings):
             kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         return openai.LLM(**kwargs)
 
-    from google.genai import types as genai_types
     from livekit.plugins import google
 
     if not provider.gemini_api_key:
@@ -70,5 +86,5 @@ def build_utility_llm(provider_name: str, provider: ProviderSettings):
         temperature=0.0,
         # Deliberation before the first token is pure delay, and these are
         # labelling tasks rather than ones that benefit from it.
-        thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+        thinking_config=gemini_thinking_config(provider.gemini_llm_model),
     )

@@ -88,10 +88,14 @@ class ProviderSettings:
     # them -- a live model name sent to the text API (or the reverse) is
     # rejected outright.
     #
-    # gemini-2.5-flash is the default on measured time-to-first-token for a
-    # one-sentence reply (451ms best / 499ms median, vs 535/648 for DeepSeek's
-    # origin API) -- see the 0019 migration for the full comparison. It's also
-    # the non-lite tier, which matters here because these agents call tools.
+    # gemini-3.8-flash is the default: API keys issued now get a 404 on every
+    # 2.5 model. Flash was originally chosen on measured time-to-first-token for
+    # a one-sentence reply (2.5 Flash: 451ms best / 499ms median, vs 535/648 for
+    # DeepSeek's origin API) -- see the 0019 migration; 3.8 hasn't been
+    # re-benchmarked. It's also the non-lite tier, which matters here because
+    # these agents call tools. A 2.x name still works where the key allows it:
+    # llm_clients.gemini_thinking_config picks the right reasoning field per
+    # family.
     gemini_llm_model: str
     # Gemini's "proactive audio": the model judges for itself whether speech was
     # addressed to it and stays quiet otherwise, so a background conversation
@@ -216,7 +220,7 @@ def provider_settings() -> ProviderSettings:
         # Defaulting to a 3.x model made silence the out-of-the-box behaviour
         # for the one thing this worker exists to do: answer inbound calls.
         gemini_model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-native-audio-latest"),
-        gemini_llm_model=os.environ.get("GEMINI_LLM_MODEL", "gemini-2.5-flash"),
+        gemini_llm_model=os.environ.get("GEMINI_LLM_MODEL", "gemini-3.8-flash"),
         gemini_proactive_audio=(os.environ.get("GEMINI_PROACTIVE_AUDIO") or "").strip().lower()
         in ("1", "true", "yes"),
         analysis_llm=(os.environ.get("ANALYSIS_LLM") or "deepseek").strip().lower(),

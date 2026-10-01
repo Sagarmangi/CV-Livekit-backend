@@ -40,6 +40,7 @@ from livekit.agents.metrics import ModelUsageCollector
 
 from . import analysis, deflection, notify, pricing, recording, spam
 from .flow import InboundCallAgent, stt_keyterm_list
+from .llm_clients import gemini_thinking_config
 from .models import AgentConfig, ConversationSettings, EndedBy
 from .settings import ProviderSettings, livekit_settings, provider_settings, recording_settings
 from .state import CallState
@@ -352,16 +353,15 @@ def _build_session_kwargs(config: AgentConfig, provider: ProviderSettings, vad: 
             temperature=settings.temperature,
             # Reasoning before the first token is pure dead air on a phone
             # call: nothing can be spoken until text arrives, so a model that
-            # thinks first simply makes the caller wait. Gemini 2.5 Flash
-            # reasons by default, which would give away the exact advantage it
-            # was chosen for.
+            # thinks first simply makes the caller wait. Gemini Flash reasons by
+            # default, which would give away the exact advantage it was chosen
+            # for.
             #
-            # Budget 0 rather than a small budget -- this is a receptionist
+            # The lowest setting the model accepts -- this is a receptionist
             # reading from a prompt and calling tools, not a task that benefits
-            # from deliberation. (Note the 3.x models take `thinking_level`
-            # instead and reject this field, which is why the default model here
-            # is pinned to a 2.x one.)
-            thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+            # from deliberation. 2.x and 3.x take different fields for this;
+            # see `gemini_thinking_config`.
+            thinking_config=gemini_thinking_config(provider.gemini_llm_model),
         )
     elif config.agent.llm_provider == "deepseek":
         if not provider.deepseek_api_key:
