@@ -54,7 +54,7 @@ Usage
 Needs SUPABASE_DB_URL (the Postgres connection string, not the REST URL --
 DDL cannot go through PostgREST). Optionally ADMIN_EMAIL, which is added to
 allowed_users so somebody can actually sign in to a fresh install; migrations
-0003/0004 seed Kodexo's own addresses and a new deployment needs its own.
+0003/0004 seed the original team's addresses and a new deployment needs its own.
 """
 
 from __future__ import annotations
@@ -177,7 +177,7 @@ def _record(cur: psycopg.Cursor, path: pathlib.Path, *, adopted: bool) -> None:
 def _ensure_admin(cur: psycopg.Cursor, email: str) -> None:
     """Give somebody a way into the dashboard.
 
-    Migrations 0003/0004 seed Kodexo's own addresses, so replaying them at a new
+    Migrations 0003/0004 seed the original team's addresses, so replaying them at a new
     location produces a dashboard nobody there can sign in to. Done here rather
     than by editing those files: they are history, and rewriting applied
     migrations to suit a later deployment is how a migration set stops being

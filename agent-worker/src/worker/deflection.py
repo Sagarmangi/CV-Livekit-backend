@@ -17,7 +17,7 @@ import threading
 from .state import CallState
 
 DEFLECTION_LINES: list[str] = [
-    "I'm an automated assistant for Kodexo Labs -- I'm here to get some quick details so the "
+    "I'm an automated assistant for Codeora Vision -- I'm here to get some quick details so the "
     "right person can follow up with you.",
     "I'm a virtual assistant, yes -- happy to help get you to the right person, though.",
     "I'm an AI assistant helping out on this line. Let's get you sorted -- what can I help with?",

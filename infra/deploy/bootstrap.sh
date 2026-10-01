@@ -3,7 +3,7 @@
 # One command to stand the backend up on a fresh VPS, and safe to run again at
 # any point:
 #
-#     /opt/kodexo/backend/infra/deploy/bootstrap.sh
+#     /opt/codeora/backend/infra/deploy/bootstrap.sh
 #
 # It does the ceremony -- venv, secrets, containers, schema, systemd, the deploy
 # symlink -- and stops with an exact instruction whenever it needs something only
@@ -24,10 +24,10 @@
 #
 set -euo pipefail
 
-REPO=/opt/kodexo/backend
+REPO=/opt/codeora/backend
 WORKER="$REPO/agent-worker"
 INFRA="$REPO/infra"
-SERVICE=kodexo-worker
+SERVICE=codeora-worker
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 ok()   { printf '    \033[32mok\033[0m   %s\n' "$*"; }
@@ -211,7 +211,7 @@ if [ -f "$UNIT" ]; then
 else
   sudo tee "$UNIT" >/dev/null <<UNITFILE
 [Unit]
-Description=Kodexo voice agent worker
+Description=Codeora Vision voice agent worker
 After=network-online.target docker.service
 
 [Service]
@@ -237,9 +237,9 @@ step "Deploy script"
 # ---------------------------------------------------------------------------
 # A symlink, so `git pull` updates the script itself rather than leaving a stale
 # copy that disagrees with the repo.
-sudo mkdir -p /opt/kodexo/deploy
-sudo ln -sfn "$INFRA/deploy/deploy-backend.sh" /opt/kodexo/deploy/deploy-backend.sh
-ok "/opt/kodexo/deploy/deploy-backend.sh -> repo copy"
+sudo mkdir -p /opt/codeora/deploy
+sudo ln -sfn "$INFRA/deploy/deploy-backend.sh" /opt/codeora/deploy/deploy-backend.sh
+ok "/opt/codeora/deploy/deploy-backend.sh -> repo copy"
 
 # ---------------------------------------------------------------------------
 step "Verifying"
@@ -278,7 +278,7 @@ cat <<CHECKLIST
          7880/tcp  7881/tcp  50000-60000/udp  5060/udp  10000-20000/udp
 
   2. Passwordless sudo for the deploy script, so deploys don't prompt:
-         sudo visudo -f /etc/sudoers.d/kodexo-deploy
+         sudo visudo -f /etc/sudoers.d/codeora-deploy
      one line:
          $(whoami) ALL=(root) NOPASSWD: /bin/systemctl restart $SERVICE, /usr/bin/docker compose *
 
@@ -293,8 +293,8 @@ cat <<CHECKLIST
      user). allowed_users is only an allowlist; it does not create the login.
 
   6. Dashboard (separate repo -- needs Node, nginx and a domain):
-         git clone https://github.com/aiautomationkodexo/livekit_frontend.git /opt/kodexo/dashboard
-         cd /opt/kodexo/dashboard && cp .env.example .env.local   # then fill in
+         git clone https://github.com/Sagarmangi/CV-Livekit-frontend.git /opt/codeora/dashboard
+         cd /opt/codeora/dashboard && cp .env.example .env.local   # then fill in
          npm ci && npm run build && npm run start -- -p 3001
      LIVEKIT_API_KEY / LIVEKIT_API_SECRET must be the same pair as above.
      nginx config: infra/nginx/.

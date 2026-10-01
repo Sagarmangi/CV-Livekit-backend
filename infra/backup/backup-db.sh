@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 set -a; source ./.env; set +a
 
 DATE="$(date +%F)"
-OUT="/tmp/kodexo-backup-${DATE}.sql.gz"
+OUT="/tmp/codeora-backup-${DATE}.sql.gz"
 
 # public schema only: Supabase's own internal schemas (auth, storage, realtime,
 # etc.) aren't this app's data and dumping them through the pooler is where
@@ -19,7 +19,7 @@ docker run --rm postgres:17-alpine \
 aws s3 cp "$OUT" "s3://${B2_BUCKET}/" --endpoint-url "https://${B2_ENDPOINT}"
 
 # Prune anything older than BACKUP_RETENTION_DAYS, locally and in the bucket.
-find /tmp -maxdepth 1 -name 'kodexo-backup-*.sql.gz' -mtime +"$BACKUP_RETENTION_DAYS" -delete
+find /tmp -maxdepth 1 -name 'codeora-backup-*.sql.gz' -mtime +"$BACKUP_RETENTION_DAYS" -delete
 
 CUTOFF="$(date -d "-${BACKUP_RETENTION_DAYS} days" +%F)"
 aws s3api list-objects-v2 --bucket "$B2_BUCKET" --endpoint-url "https://${B2_ENDPOINT}" \

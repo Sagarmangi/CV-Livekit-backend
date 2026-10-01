@@ -185,7 +185,7 @@ def livekit_settings() -> LiveKitSettings:
         url=_required("LIVEKIT_URL"),
         api_key=_required("LIVEKIT_API_KEY"),
         api_secret=_required("LIVEKIT_API_SECRET"),
-        agent_name=os.environ.get("LIVEKIT_AGENT_NAME", "kodexo-inbound-agent"),
+        agent_name=os.environ.get("LIVEKIT_AGENT_NAME", "codeora-inbound-agent"),
         load_threshold=_load_threshold(),
     )
 
@@ -262,12 +262,12 @@ def recording_settings() -> RecordingSettings:
 
     return RecordingSettings(
         enabled=enabled,
-        output_dir=os.environ.get("RECORDING_OUTPUT_DIR", "/opt/kodexo/recordings"),
+        output_dir=os.environ.get("RECORDING_OUTPUT_DIR", "/opt/codeora/recordings"),
         egress_dir=os.environ.get("RECORDING_EGRESS_DIR", "/out"),
         cloudinary_cloud_name=cloud_name,
         cloudinary_api_key=api_key,
         cloudinary_api_secret=api_secret,
-        cloudinary_folder=os.environ.get("CLOUDINARY_FOLDER", "kodexo-calls"),
+        cloudinary_folder=os.environ.get("CLOUDINARY_FOLDER", "codeora-calls"),
     )
 
 
