@@ -1203,6 +1203,10 @@ def main() -> None:
             ws_url=settings.url,
             api_key=settings.api_key,
             api_secret=settings.api_secret,
+            # Health-check HTTP server. Configurable because 8081 is often taken
+            # on a shared host; localhost-only since nothing outside needs it.
+            host=os.environ.get("WORKER_HTTP_HOST", "127.0.0.1"),
+            port=int(os.environ.get("WORKER_HTTP_PORT", "8081")),
             **load_options,
         )
     )
