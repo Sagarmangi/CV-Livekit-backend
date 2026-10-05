@@ -15,6 +15,7 @@ import math
 import os
 import time
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from google.genai import types as genai_types
 from livekit import rtc
@@ -49,6 +50,7 @@ from .settings import (
     livekit_settings,
     provider_settings,
     recording_settings,
+    slack_settings,
     widget_settings,
 )
 from .state import CallState
@@ -338,25 +340,88 @@ def _parse_dispatch(metadata: str) -> Dispatch:
     return Dispatch("phone")
 
 
-def _origin_allowed(origin: str | None, allowed: list[str]) -> bool:
+def _normalise_origin(value: str) -> str:
+    """scheme://host[:port], lower-cased, with any path, query or trailing
+    slash dropped -- so an admin's "https://Site.com/" and a browser's
+    "https://site.com" compare equal, and DASHBOARD_BASE_URL (which may carry
+    a path) reduces to the origin a browser would actually send."""
+    parts = urlsplit(value.strip())
+    if parts.scheme and parts.netloc:
+        return f"{parts.scheme}://{parts.netloc}".lower()
+    # Not a parseable URL (a bare host, say): fall back to the loose
+    # comparison so an unusual allow-list entry still has a chance to match.
+    return value.strip().rstrip("/").lower()
+
+
+def _origin_allowed(
+    origin: str | None, allowed: list[str], dashboard_base_url: str | None = None
+) -> bool:
     """Whether a widget call's page origin is on the agent's allow-list.
 
     An empty list means the admin hasn't restricted it, and the call is let
     through -- the migration's column comment says as much, and refusing every
     call until a list exists would make the widget impossible to try. With a
     list, the origin must be on it: a leaked key is then useless from any other
-    site. Compared loosely (case, trailing slash) because an origin is
-    scheme://host[:port] and browsers and admins disagree about the slash.
+    site.
+
+    The dashboard's own origin (DASHBOARD_BASE_URL) is always accepted alongside
+    the list, so its widget preview keeps working on an agent that is locked to
+    the customer's site. Only an admin can reach that page, so it widens
+    nothing.
     """
     if not allowed:
         return True
     if not origin:
         return False
 
-    def norm(value: str) -> str:
-        return value.strip().rstrip("/").lower()
+    permitted = {_normalise_origin(entry) for entry in allowed}
+    if dashboard_base_url:
+        permitted.add(_normalise_origin(dashboard_base_url))
+    return _normalise_origin(origin) in permitted
 
-    return norm(origin) in {norm(entry) for entry in allowed}
+
+async def _log_refused_widget_call(
+    ctx: JobContext, dispatch: Dispatch, *, agent_id: str | None, reason: str, detail: str
+) -> None:
+    """Write a call_logs row for a widget attempt that was turned away.
+
+    A refusal happens before CallState exists and before the shutdown callback
+    is registered, so without this it left no trace beyond the worker log --
+    and a run of refusals is exactly what a mis-set allow-list, a leaked key or
+    someone probing keys looks like. Written with channel='widget' so the
+    Calls page can show them next to the calls that went through.
+
+    insert_call_log never raises (it logs and returns None), so this can't
+    turn a refusal into a crash.
+    """
+    await insert_call_log(
+        recording_url=None,
+        call_sid=None,
+        room_id=ctx.room.name,
+        agent_id=agent_id,
+        caller_number=None,
+        transcript=None,
+        duration_seconds=0,
+        outcome=None,
+        matched_department=None,
+        lead_name=None,
+        lead_company=None,
+        lead_need=None,
+        is_test=False,
+        channel="widget",
+        channel_metadata={
+            "origin": dispatch.origin,
+            "visitor_id": dispatch.visitor_id,
+            # The key is already public (it's embedded on a website), and for a
+            # refused key it is the only clue to which agent was being asked for.
+            "widget_key": dispatch.widget_key,
+            "refused": reason,
+        },
+        call_status="failed",
+        ended_by="system",
+        end_reason=reason,
+        error_message=detail,
+    )
 
 
 # Cap on how long the closing line may take to play before the room is deleted
@@ -962,10 +1027,16 @@ async def _run_call(ctx: JobContext) -> None:
         participant = await ctx.wait_for_participant()
         config = await load_agent_config_by_widget_key(dispatch.widget_key or "")
         if config is None:
-            await _report_diagnostic(
-                ctx,
+            detail = (
                 "This widget key isn't active: no agent has it, the widget is switched off "
-                "for the agent, or the agent isn't active.",
+                "for the agent, or the agent isn't active."
+            )
+            await _report_diagnostic(ctx, detail)
+            # Both refusals below are recorded -- see _log_refused_widget_call.
+            # agent_id is unknown here by design: the lookup hides *why* the key
+            # failed, and the row does too.
+            await _log_refused_widget_call(
+                ctx, dispatch, agent_id=None, reason="widget_key_refused", detail=detail
             )
             ctx.delete_room()
             return
@@ -973,11 +1044,22 @@ async def _run_call(ctx: JobContext) -> None:
         # Second lock on the key -- see _origin_allowed. The token endpoint
         # should have refused this already; checking again here is what keeps a
         # leaked key useless if that endpoint is ever bypassed.
-        if not _origin_allowed(dispatch.origin, config.agent.widget_allowed_origins):
-            await _report_diagnostic(
-                ctx,
+        if not _origin_allowed(
+            dispatch.origin,
+            config.agent.widget_allowed_origins,
+            slack_settings().dashboard_base_url,
+        ):
+            detail = (
                 f"Origin {dispatch.origin or '<none>'} isn't on agent {config.agent.name}'s "
-                f"widget allow-list, so the widget call was refused.",
+                f"widget allow-list, so the widget call was refused."
+            )
+            await _report_diagnostic(ctx, detail)
+            await _log_refused_widget_call(
+                ctx,
+                dispatch,
+                agent_id=config.agent.agent_id,
+                reason="widget_origin_refused",
+                detail=detail,
             )
             ctx.delete_room()
             return

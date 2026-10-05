@@ -339,7 +339,14 @@ That JSON is the whole contract between the two repos. The worker then:
   A disabled widget, a paused agent and an unknown key all fail the same way,
   so the page learns nothing about which;
 - re-checks `origin` against `widget_allowed_origins`. An **empty list allows
-  any origin** — fine while trying it out, not for a key on a public site;
+  any origin** — fine while trying it out, not for a key on a public site. The
+  dashboard's own origin (from `DASHBOARD_BASE_URL`) is always accepted too, so
+  its widget preview works on a locked-down agent;
+- records a refused attempt (inactive key, origin not allowed) as a
+  `call_logs` row with `channel = 'widget'`, `call_status = 'failed'` and
+  `end_reason` of `widget_key_refused` or `widget_origin_refused`, with the
+  origin, visitor id and key in `channel_metadata` — so a mis-set allow-list
+  or someone probing keys is visible on the Calls page, not just in the log;
 - opens with `widget_config.greeting` if set, otherwise the agent's normal
   first message;
 - ends the call when `widget_max_seconds` (default 300) is reached: the agent
