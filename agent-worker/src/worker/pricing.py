@@ -262,13 +262,13 @@ def _llm_cost(usage: Any, out: CallCost) -> None:
 
 
 def compute_call_cost(
-    model_usage: list[Any], duration_seconds: int | None, *, is_test: bool
+    model_usage: list[Any], duration_seconds: int | None, *, is_web: bool
 ) -> CallCost:
     """Price one call from `ModelUsageCollector.flatten()`.
 
-    `is_test` zeroes telephony: a dashboard test session is a browser joining a
-    LiveKit room, so no carrier is involved and charging it a per-minute PSTN
-    rate would overstate every test call in the log.
+    `is_web` zeroes telephony: a dashboard test session or a web-widget call is
+    a browser joining a LiveKit room, so no carrier is involved and charging it
+    a per-minute PSTN rate would overstate every such call in the log.
     """
     cost = CallCost()
 
@@ -287,7 +287,7 @@ def compute_call_cost(
         except Exception:  # noqa: BLE001 -- costing must never fail a call teardown
             logger.exception("couldn't price %s usage for model %r", kind, getattr(usage, "model", "?"))
 
-    if not is_test and duration_seconds:
+    if not is_web and duration_seconds:
         minutes = duration_seconds / 60.0
         rate = rates().telephony_per_min
         cost.telephony_usd = minutes * rate

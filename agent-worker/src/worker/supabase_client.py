@@ -18,6 +18,7 @@ from .models import (
     Agent,
     AgentConfig,
     CallOutcome,
+    Channel,
     Tool,
 )
 from .pricing import CallCost
@@ -90,6 +91,32 @@ async def load_agent_config_by_id(agent_id: str) -> AgentConfig | None:
     return await _load_config_for_agent_row(client, result.data)
 
 
+async def load_agent_config_by_widget_key(widget_key: str) -> AgentConfig | None:
+    """The public web widget's lookup -- see the 0027 migration.
+
+    Three conditions in one query, deliberately: the key is the only thing a
+    website knows, and it must answer only while an admin has the widget on AND
+    the agent is active. A disabled widget and a paused agent both come back as
+    None here, indistinguishable from an unknown key, so the browser learns
+    nothing about why.
+    """
+
+    client = await get_client()
+    result = (
+        await client.table("agents")
+        .select("*")
+        .eq("widget_key", widget_key)
+        .eq("widget_enabled", True)
+        .eq("status", "active")
+        .maybe_single()
+        .execute()
+    )
+    if result is None or result.data is None:
+        return None
+
+    return await _load_config_for_agent_row(client, result.data)
+
+
 async def _load_config_for_agent_row(client: AsyncClient, agent_row: dict[str, Any]) -> AgentConfig:
     agent = Agent.from_row(agent_row)
 
@@ -136,6 +163,11 @@ async def insert_call_log(
     lead_company: str | None,
     lead_need: str | None,
     is_test: bool = False,
+    # How the call arrived, and what that channel knows -- see the 0027
+    # migration. is_test is still written alongside: the dashboard filters on
+    # it, and a widget call is channel='widget' with is_test=false.
+    channel: Channel = "phone",
+    channel_metadata: dict[str, Any] | None = None,
     # What the call cost, split by the thing that charges for it -- see
     # pricing.py. None means it couldn't be computed; the columns stay NULL
     # rather than recording a call as free.
@@ -212,6 +244,8 @@ async def insert_call_log(
                 "lead_company": lead_company,
                 "lead_need": lead_need,
                 "is_test": is_test,
+                "channel": channel,
+                "channel_metadata": channel_metadata,
                 "called_number": called_number,
                 "call_status": call_status,
                 "transfer_attempted": transfer_attempted,

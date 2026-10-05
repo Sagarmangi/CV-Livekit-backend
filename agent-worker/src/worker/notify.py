@@ -281,6 +281,12 @@ async def send_end_call_webhook(
     lead_need: str | None,
     qualification_answers: dict[str, Any],
     is_test: bool,
+    # How the call arrived and what that channel knows -- "phone", "test" or
+    # "widget", and for a widget call the page origin and visitor id. A CRM
+    # matching a website visitor to a record needs the visitor id far more
+    # than it needs a phone number the call never had.
+    channel: str = "phone",
+    channel_metadata: dict[str, Any] | None = None,
     # Who ended the call and why -- see CallState.claim_end. Sent because a CRM
     # syncing these records cares a great deal whether the caller abandoned the
     # call or the agent finished it, and `outcome` alone doesn't say: a caller
@@ -320,6 +326,8 @@ async def send_end_call_webhook(
         "lead_need": lead_need,
         "qualification_answers": qualification_answers,
         "is_test": is_test,
+        "channel": channel,
+        "channel_metadata": channel_metadata,
         "ended_by": ended_by,
         "end_reason": end_reason,
     }

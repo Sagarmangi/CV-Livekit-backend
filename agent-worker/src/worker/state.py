@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from .models import AgentConfig, CallOutcome, EndedBy
+from .models import AgentConfig, CallOutcome, Channel, EndedBy
 
 logger = logging.getLogger("worker.state")
 
@@ -28,8 +28,21 @@ class CallState:
     # agent fronts more than one. None for a browser test, which dials nothing.
     called_number: str | None = None
     # True for a dashboard "test this agent" session (see entrypoint.py) --
-    # skips call_logs/Slack so test runs don't pollute real call history.
+    # skips Slack so test runs don't pollute real call history.
     is_test: bool = False
+    # How the call arrived -- see models.Channel. "test" and "widget" are both
+    # browser calls (no carrier, so no telephony cost and a "web" transport in
+    # the turn-timing log), but only "test" is a test.
+    channel: Channel = "phone"
+    # What the channel knows that the phone columns can't hold: for a widget
+    # call, the page's origin and the embed's visitor id. None for phone/test.
+    channel_metadata: dict[str, Any] | None = None
+
+    @property
+    def is_web(self) -> bool:
+        """A browser on the other end rather than a phone line -- which is what
+        decides the telephony charge and the transport label, not is_test."""
+        return self.channel != "phone"
 
     # Filled in by the record_lead_info built-in tool as the qualification
     # conversation progresses (see tools.py). Keys match qualification_criteria

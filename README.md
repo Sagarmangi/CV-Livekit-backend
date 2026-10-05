@@ -51,7 +51,7 @@ PostgREST, which cannot create tables.
 ### Standing up a new environment
 
 Set `SUPABASE_DB_URL` and `ADMIN_EMAIL` on a fresh Supabase project, then run
-the command above. All 26 migrations apply in order in one pass -- there is no
+the command above. All 27 migrations apply in order in one pass -- there is no
 file-by-file pasting into the SQL editor.
 
 `ADMIN_EMAIL` matters: migrations 0003/0004 seed the original team's addresses into

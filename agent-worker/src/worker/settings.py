@@ -279,3 +279,28 @@ def slack_settings() -> SlackSettings:
         webhook_url=os.environ.get("SLACK_WEBHOOK_URL") or None,
         dashboard_base_url=os.environ.get("DASHBOARD_BASE_URL") or None,
     )
+
+
+# Spoken by the agent when a widget session reaches agents.widget_max_seconds,
+# just before the worker ends it. Short on purpose: it plays with interruptions
+# off, so every word is a word the visitor has to sit through.
+DEFAULT_WIDGET_CLOSING_LINE = (
+    "We've reached the time limit for this session. Thanks for chatting -- goodbye!"
+)
+
+
+@dataclass(frozen=True)
+class WidgetSettings:
+    """The public web widget -- see the 0027 migration. Everything per-agent
+    (key, allowed origins, time limit, greeting) lives on the agents row; this
+    holds only what is the same for every agent on the deployment."""
+
+    closing_line: str
+
+
+@lru_cache
+def widget_settings() -> WidgetSettings:
+    return WidgetSettings(
+        closing_line=(os.environ.get("WIDGET_CLOSING_LINE") or "").strip()
+        or DEFAULT_WIDGET_CLOSING_LINE,
+    )

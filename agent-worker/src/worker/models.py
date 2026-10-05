@@ -55,6 +55,15 @@ CallOutcome = Literal[
 # failed (SIP trunk, media, timeout) rather than anyone choosing to end the call.
 EndedBy = Literal["agent", "caller", "system", "telephony", "unknown"]
 
+# How a call arrived -- see the 0027 migration, and entrypoint._parse_dispatch
+# for how each is recognised from the job metadata. Distinct from is_test, which
+# stays: a widget call is a browser call and NOT a test, so the two say
+# different things about the same row.
+#   "phone"  -- Twilio SIP; the caller dialled a number.
+#   "test"   -- the dashboard's Test button; an admin in a browser.
+#   "widget" -- the public web widget; a visitor on a customer's site.
+Channel = Literal["phone", "test", "widget"]
+
 
 @dataclass(frozen=True)
 class QualificationCriterion:
@@ -162,6 +171,24 @@ class Agent:
     # Gates the lead alert and the transfer-failure alert alike; the worker's
     # SLACK_WEBHOOK_URL still has to be set for either to go anywhere.
     slack_notifications_enabled: bool
+    # The public web widget -- see the 0027 migration. widget_key is what the
+    # embed sends to reach this agent; the worker only answers on it when
+    # widget_enabled is on and the agent is active (see
+    # supabase_client.load_agent_config_by_widget_key). widget_config is
+    # presentation for the embed script; the worker reads just its optional
+    # "greeting". widget_max_seconds is the hard session cap entrypoint enforces.
+    widget_enabled: bool
+    widget_key: str | None
+    widget_allowed_origins: list[str]
+    widget_config: dict[str, Any]
+    widget_max_seconds: int
+
+    @property
+    def widget_greeting(self) -> str | None:
+        """The line a widget call opens with, if widget_config sets one.
+        Overrides first_message_mode/first_message_text for widget calls only."""
+        greeting = self.widget_config.get("greeting")
+        return greeting.strip() if isinstance(greeting, str) and greeting.strip() else None
 
     @staticmethod
     def from_row(row: dict[str, Any]) -> "Agent":
@@ -193,6 +220,17 @@ class Agent:
             # running against a database without 0026 stays quiet rather than
             # broadcasting on a setting nobody chose.
             slack_notifications_enabled=bool(row.get("slack_notifications_enabled")),
+            # Same convention: a row from before 0027 reads as widget-off, with
+            # no key, so nothing public can reach it.
+            widget_enabled=bool(row.get("widget_enabled")),
+            widget_key=row.get("widget_key"),
+            widget_allowed_origins=[
+                str(origin) for origin in (row.get("widget_allowed_origins") or []) if origin
+            ],
+            widget_config=(
+                row["widget_config"] if isinstance(row.get("widget_config"), dict) else {}
+            ),
+            widget_max_seconds=int(row.get("widget_max_seconds") or 300),
         )
 
 

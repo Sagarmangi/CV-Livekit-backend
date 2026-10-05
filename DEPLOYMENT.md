@@ -116,7 +116,7 @@ Then:
 .venv/bin/python -m worker.migrate
 ```
 
-**Check:** the last lines read `applied 26 migration(s)` then `done`, and
+**Check:** the last lines read `applied 27 migration(s)` then `done`, and
 `--dry-run` afterwards reports `pending: 0`.
 
 If it says *"already has an `agents` table but no schema_migrations"*, the
@@ -303,6 +303,88 @@ journalctl -u codeora-worker -f
 **Check, in order:** the agent greets you · `call end claimed: ended_by=…` when
 you hang up · a row on the dashboard's Calls page · a Slack message if the call
 captured a name or a need.
+
+---
+
+## 8. The web widget (optional)
+
+A call button a customer embeds on their own website. The visitor talks to the
+agent from the browser — no phone number, no dashboard login. It reuses the
+browser path the dashboard's Test button already has, with a different trust
+model: the agent is addressed by an opaque key, it is off until switched on,
+and every session has a hard time limit.
+
+### How a widget call reaches the worker
+
+The worker only ever sees a LiveKit **agent dispatch**, exactly like a test
+call. The embed script never talks to the worker or to Supabase; it calls a
+token endpoint on the dashboard, which:
+
+1. looks up the agent by `widget_key`, checks `widget_enabled`, `status =
+   'active'` and that the page's `Origin` header is in
+   `widget_allowed_origins`;
+2. creates a room and a participant token for the visitor;
+3. creates an explicit agent dispatch for `LIVEKIT_AGENT_NAME` with this
+   **job metadata**:
+
+```json
+{"widget_key": "wk_…", "origin": "https://customer-site.com", "visitor_id": "…"}
+```
+
+That JSON is the whole contract between the two repos. The worker then:
+
+- picks the widget path from `widget_key` (a job with `test_agent_id` is a test
+  call; one with neither is a phone call — see `entrypoint._parse_dispatch`);
+- loads the agent **only if** `widget_enabled` is on and the agent is active.
+  A disabled widget, a paused agent and an unknown key all fail the same way,
+  so the page learns nothing about which;
+- re-checks `origin` against `widget_allowed_origins`. An **empty list allows
+  any origin** — fine while trying it out, not for a key on a public site;
+- opens with `widget_config.greeting` if set, otherwise the agent's normal
+  first message;
+- ends the call when `widget_max_seconds` (default 300) is reached: the agent
+  says `WIDGET_CLOSING_LINE` and the room is deleted.
+
+Spam detection, tools, the end-call webhook and Slack lead alerts all behave as
+on a phone call. Only telephony cost is skipped — no carrier is involved.
+
+### What gets recorded
+
+Every `call_logs` row now carries `channel` — `phone`, `test` or `widget`.
+`is_test` is still written and still means what it did; a widget call is
+`channel = 'widget', is_test = false`, because it is a real visitor. Widget
+rows also get `channel_metadata = {"origin": …, "visitor_id": …}`, and the
+end-call webhook payload carries the same two fields. `caller_number` is NULL.
+
+### Per-agent settings (migration 0027)
+
+| Column | Meaning |
+|---|---|
+| `widget_enabled` | Off by default, for every agent. Nothing answers on the key until this is on. |
+| `widget_key` | `wk_` + 24 URL-safe characters, generated for every agent. Rotate with `update agents set widget_key = generate_widget_key() where agent_id = …`. |
+| `widget_allowed_origins` | `{'https://customer-site.com'}` — scheme and host, no path. Empty allows any. |
+| `widget_max_seconds` | Hard cap per session; bounds what a stranger can run up. |
+| `widget_config` | Presentation for the embed (theme colour, button label, position) plus an optional `greeting`. |
+
+### Worker env var
+
+- `WIDGET_CLOSING_LINE` — what the agent says when the time limit hits. Optional;
+  there is a default.
+
+### Enable it for one agent
+
+```sql
+update agents
+set widget_enabled = true,
+    widget_allowed_origins = '{https://customer-site.com}'
+where agent_id = '<uuid>';
+select widget_key from agents where agent_id = '<uuid>';
+```
+
+Hand the key to the site. **Check:** a widget call shows `widget call for agent
+…` in `journalctl -u codeora-worker -f`, then a Calls row with channel
+`widget`; leave it open past the limit and you hear the closing line followed by
+`call end claimed: ended_by=system reason=widget_time_limit`.
 
 ---
 

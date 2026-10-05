@@ -14,6 +14,7 @@ import logging
 import math
 import os
 import time
+from dataclasses import dataclass
 
 from google.genai import types as genai_types
 from livekit import rtc
@@ -36,15 +37,27 @@ from livekit.agents import (
 )
 from livekit.plugins import deepgram, google, groq, openai, silero
 
+from livekit.agents.llm import RealtimeModel
 from livekit.agents.metrics import ModelUsageCollector
 
 from . import analysis, deflection, notify, pricing, recording, spam
 from .flow import InboundCallAgent, stt_keyterm_list
 from .llm_clients import gemini_thinking_config
-from .models import AgentConfig, ConversationSettings, EndedBy
-from .settings import ProviderSettings, livekit_settings, provider_settings, recording_settings
+from .models import AgentConfig, Channel, ConversationSettings, EndedBy
+from .settings import (
+    ProviderSettings,
+    livekit_settings,
+    provider_settings,
+    recording_settings,
+    widget_settings,
+)
 from .state import CallState
-from .supabase_client import insert_call_log, load_agent_config_by_id, load_agent_config_by_number
+from .supabase_client import (
+    insert_call_log,
+    load_agent_config_by_id,
+    load_agent_config_by_number,
+    load_agent_config_by_widget_key,
+)
 
 logger = logging.getLogger("worker.entrypoint")
 
@@ -268,20 +281,150 @@ async def _report_diagnostic(ctx: JobContext, message: str) -> None:
         logger.debug("couldn't publish the diagnostic into the room", exc_info=True)
 
 
-def _test_agent_id_from_metadata(metadata: str) -> str | None:
-    """The dashboard's "test this agent" button creates an explicit dispatch
-    with `{"test_agent_id": "<uuid>"}` as the job metadata -- see
-    dashboard/app/(protected)/agents/[agentId]/test-actions.ts. A real SIP
-    call never carries this, so its absence is what selects the production path.
+@dataclass(frozen=True)
+class Dispatch:
+    """How this job was created, read off the job metadata -- see models.Channel.
+
+    Only the browser channels carry metadata. A phone call arrives through the
+    SIP dispatch rule with none at all, which is what makes "no recognised key"
+    the production path rather than an error.
     """
-    if not metadata:
-        return None
+
+    channel: Channel
+    # "test": the dashboard's Test button dispatches with
+    # {"test_agent_id": "<uuid>"} -- see
+    # dashboard/app/(protected)/agents/[agentId]/test-actions.ts.
+    test_agent_id: str | None = None
+    # "widget": the embed's token endpoint dispatches with
+    # {"widget_key": "wk_...", "origin": "https://customer-site.com",
+    #  "visitor_id": "..."}. The key is the agent lookup (see
+    # load_agent_config_by_widget_key); origin and visitor_id are recorded on
+    # the call and origin is checked against the agent's allow-list.
+    widget_key: str | None = None
+    origin: str | None = None
+    visitor_id: str | None = None
+
+
+def _parse_dispatch(metadata: str) -> Dispatch:
+    """Which path this call takes. Test wins over widget if both keys are
+    somehow present, because test_agent_id is the older contract and the
+    dashboard is the only thing that can set it."""
+
+    def text(value: object) -> str | None:
+        return value if isinstance(value, str) and value.strip() else None
+
+    data: object = None
+    if metadata:
+        try:
+            data = json.loads(metadata)
+        except ValueError:
+            data = None
+    if not isinstance(data, dict):
+        return Dispatch("phone")
+
+    test_agent_id = text(data.get("test_agent_id"))
+    if test_agent_id:
+        return Dispatch("test", test_agent_id=test_agent_id)
+
+    widget_key = text(data.get("widget_key"))
+    if widget_key:
+        return Dispatch(
+            "widget",
+            widget_key=widget_key,
+            origin=text(data.get("origin")),
+            visitor_id=text(data.get("visitor_id")),
+        )
+
+    return Dispatch("phone")
+
+
+def _origin_allowed(origin: str | None, allowed: list[str]) -> bool:
+    """Whether a widget call's page origin is on the agent's allow-list.
+
+    An empty list means the admin hasn't restricted it, and the call is let
+    through -- the migration's column comment says as much, and refusing every
+    call until a list exists would make the widget impossible to try. With a
+    list, the origin must be on it: a leaked key is then useless from any other
+    site. Compared loosely (case, trailing slash) because an origin is
+    scheme://host[:port] and browsers and admins disagree about the slash.
+    """
+    if not allowed:
+        return True
+    if not origin:
+        return False
+
+    def norm(value: str) -> str:
+        return value.strip().rstrip("/").lower()
+
+    return norm(origin) in {norm(entry) for entry in allowed}
+
+
+# Cap on how long the closing line may take to play before the room is deleted
+# regardless. Generous because it covers TTS synthesis plus playout; a hang here
+# means the visitor is listening to silence on a session that should be over.
+_WIDGET_CLOSING_TIMEOUT = 20.0
+
+
+async def _end_widget_call_at_limit(
+    ctx: JobContext, session: AgentSession, state: CallState, max_seconds: int
+) -> None:
+    """Ends a widget session when agents.widget_max_seconds is reached.
+
+    The cap exists because the widget is public: without it, a page left open
+    on a stranger's desk runs the STT/LLM/TTS meter until LiveKit's room
+    timeout. The agent says a short closing line first so the end isn't a
+    silent cut, then the room is deleted -- the same mechanics as tools._hang_up,
+    minus the tool-call constraints, since this runs in its own task.
+
+    Runs as a task for the life of the call and is cancelled by the shutdown
+    callback when the call ends sooner, which is the normal case.
+    """
+    await asyncio.sleep(max_seconds)
+
+    if state.ended_by is not None:
+        # Something else is already ending the call -- a hang-up in flight, a
+        # visitor who just left. Don't talk over it.
+        return
+
+    # Claimed before the closing line, for the same reason _hang_up does it:
+    # everything past this point can fail, and the row must say the limit
+    # ended the call even if the goodbye stumbled.
+    state.claim_end("system", "widget_time_limit")
+    logger.info("widget session reached its %ds limit; closing the call", max_seconds)
+
+    closing_line = widget_settings().closing_line
     try:
-        data = json.loads(metadata)
-    except ValueError:
-        return None
-    value = data.get("test_agent_id") if isinstance(data, dict) else None
-    return value if isinstance(value, str) and value else None
+        # Cut whatever the agent is mid-way through -- the closing line must
+        # not queue behind a long answer. force, so an uninterruptible speech
+        # (one of our own closing lines, say) can't block it. RuntimeError is
+        # "nothing to interrupt / session not running", which is fine.
+        try:
+            await asyncio.wait_for(session.interrupt(force=True), timeout=5.0)
+        except RuntimeError:
+            pass
+
+        if isinstance(session.llm, RealtimeModel):
+            # No TTS stage for say() to write into -- same workaround as
+            # flow.on_enter's greeting: the model is handed the exact line.
+            handle = session.generate_reply(
+                instructions=(
+                    "The session's time limit has been reached. Say exactly this, word for "
+                    f'word, and nothing else: "{closing_line}"'
+                ),
+                allow_interruptions=False,
+            )
+        else:
+            handle = session.say(closing_line, allow_interruptions=False)
+        await asyncio.wait_for(handle.wait_for_playout(), timeout=_WIDGET_CLOSING_TIMEOUT)
+    except Exception:  # noqa: BLE001
+        # Never let the goodbye keep a capped session alive -- that inverts the
+        # whole reason the cap exists.
+        logger.exception("closing line failed at the widget time limit; ending anyway")
+
+    try:
+        await ctx.delete_room()
+    except Exception:  # noqa: BLE001
+        logger.exception("delete_room failed at the widget time limit")
 
 
 def _build_session_kwargs(config: AgentConfig, provider: ProviderSettings, vad: silero.VAD) -> dict:
@@ -761,7 +904,7 @@ def _log_turn_metrics(state: CallState, session: AgentSession, event: MetricsCol
 
     logger.info(
         "turn timing transport=%s %s",
-        "web" if state.is_test else "sip",
+        "web" if state.is_web else "sip",
         " ".join(f"{key}={value}" for key, value in parts.items() if value),
     )
 
@@ -786,13 +929,14 @@ async def _run_call(ctx: JobContext) -> None:
     # CALLER_AUDIO_METER is set.
     _watch_caller_audio(ctx)
 
-    test_agent_id = _test_agent_id_from_metadata(ctx.job.metadata)
+    dispatch = _parse_dispatch(ctx.job.metadata)
     call_sid: str | None = None
     caller_number: str | None = None
-    # Stays None on the test path, which dials no number at all.
+    # Stays None on the browser paths, which dial no number at all.
     called_number: str | None = None
+    channel_metadata: dict | None = None
 
-    if test_agent_id:
+    if dispatch.channel == "test":
         # Waits for the tester *before* loading the config, not after: a
         # diagnostic sent into an empty room is dropped, and "this agent no
         # longer exists" is exactly what the panel needs to be able to show.
@@ -801,13 +945,52 @@ async def _run_call(ctx: JobContext) -> None:
         # point of this path, so the production active-only gate below is
         # intentionally skipped for it.
         participant = await ctx.wait_for_participant()
-        config = await load_agent_config_by_id(test_agent_id)
+        config = await load_agent_config_by_id(dispatch.test_agent_id or "")
         if config is None:
             await _report_diagnostic(
-                ctx, f"No agent exists with id {test_agent_id}. It may have been deleted."
+                ctx, f"No agent exists with id {dispatch.test_agent_id}. It may have been deleted."
             )
             ctx.delete_room()
             return
+    elif dispatch.channel == "widget":
+        # Same mechanics as the test path -- a browser joins as a standard
+        # participant and the diagnostic is what the embed can show -- with the
+        # opposite trust model. The lookup itself enforces widget_enabled and
+        # status='active', so a key for a switched-off widget or a paused agent
+        # fails identically to one that never existed, and the page learns
+        # nothing about which.
+        participant = await ctx.wait_for_participant()
+        config = await load_agent_config_by_widget_key(dispatch.widget_key or "")
+        if config is None:
+            await _report_diagnostic(
+                ctx,
+                "This widget key isn't active: no agent has it, the widget is switched off "
+                "for the agent, or the agent isn't active.",
+            )
+            ctx.delete_room()
+            return
+
+        # Second lock on the key -- see _origin_allowed. The token endpoint
+        # should have refused this already; checking again here is what keeps a
+        # leaked key useless if that endpoint is ever bypassed.
+        if not _origin_allowed(dispatch.origin, config.agent.widget_allowed_origins):
+            await _report_diagnostic(
+                ctx,
+                f"Origin {dispatch.origin or '<none>'} isn't on agent {config.agent.name}'s "
+                f"widget allow-list, so the widget call was refused.",
+            )
+            ctx.delete_room()
+            return
+
+        channel_metadata = {"origin": dispatch.origin, "visitor_id": dispatch.visitor_id}
+        logger.info(
+            "widget call for agent %s (%s): origin=%s visitor_id=%s limit=%ds",
+            config.agent.name,
+            config.agent.agent_id,
+            dispatch.origin or "<none>",
+            dispatch.visitor_id or "<none>",
+            config.agent.widget_max_seconds,
+        )
     else:
         participant = await ctx.wait_for_participant(kind=rtc.ParticipantKind.PARTICIPANT_KIND_SIP)
         dialed_number = participant.attributes.get("sip.trunkPhoneNumber")
@@ -852,7 +1035,9 @@ async def _run_call(ctx: JobContext) -> None:
         call_sid=call_sid,
         caller_number=caller_number,
         called_number=called_number,
-        is_test=bool(test_agent_id),
+        is_test=dispatch.channel == "test",
+        channel=dispatch.channel,
+        channel_metadata=channel_metadata,
     )
     state.ai_deflection_index = deflection.start_call_offset()
 
@@ -954,8 +1139,14 @@ async def _run_call(ctx: JobContext) -> None:
     # nothing was written to call_logs at all. Losing the record of a call to a
     # problem with storing its audio is far worse than losing the audio.
     call_recording: recording.Recording | None = None
+    # The widget time-limit task, once started -- cancelled at shutdown so a
+    # visitor who leaves early doesn't leave a timer running into a dead room.
+    widget_limit: asyncio.Task | None = None
 
     async def _on_shutdown(reason: str) -> None:
+        if widget_limit is not None and not widget_limit.done():
+            widget_limit.cancel()
+
         # The reason argument is the SDK's, not ours: a shutdown callback may
         # take it (job.py's add_shutdown_callback wraps zero-arg ones), and it
         # carries whatever ended the job -- our own "caller hung up", or the
@@ -989,7 +1180,14 @@ async def _run_call(ctx: JobContext) -> None:
     _end_job_when_caller_leaves(ctx, participant.identity, state)
 
     await session.start(
-        InboundCallAgent(config),
+        InboundCallAgent(
+            config,
+            # Only a widget call gets the widget greeting; phone and test calls
+            # open exactly as they always have.
+            greeting_override=(
+                config.agent.widget_greeting if dispatch.channel == "widget" else None
+            ),
+        ),
         room=ctx.room,
         room_input_options=_room_input_options(),
         # DTX off, RED on. DTX stops sending during silence, which is cheaper but
@@ -1006,6 +1204,14 @@ async def _run_call(ctx: JobContext) -> None:
             ),
         ),
     )
+
+    if dispatch.channel == "widget":
+        # After the session is up, so the clock starts with the greeting rather
+        # than with the dispatch. `session.start` returns once started, not
+        # when the call ends, so this task outlives this function on purpose.
+        widget_limit = asyncio.create_task(
+            _end_widget_call_at_limit(ctx, session, state, config.agent.widget_max_seconds)
+        )
 
 
 async def _log_and_notify(
@@ -1030,7 +1236,7 @@ async def _log_and_notify(
     # Priced after the analysis rather than before, so the collector has already
     # been handed the analysis LLM's own tokens and they're inside the total.
     cost = pricing.compute_call_cost(
-        usage.flatten() if usage else [], duration_seconds, is_test=state.is_test
+        usage.flatten() if usage else [], duration_seconds, is_web=state.is_web
     )
     logger.info(
         "call cost $%.6f (stt $%.6f · llm $%.6f · tts $%.6f · telephony $%.6f est)",
@@ -1056,6 +1262,8 @@ async def _log_and_notify(
         lead_company=state.lead_company,
         lead_need=state.lead_need,
         is_test=state.is_test,
+        channel=state.channel,
+        channel_metadata=state.channel_metadata,
         cost=cost,
         called_number=state.called_number,
         # Derived in code rather than asked of the model -- a transfer either ran
@@ -1104,6 +1312,8 @@ async def _log_and_notify(
         lead_need=state.lead_need,
         qualification_answers=state.qualification_answers,
         is_test=state.is_test,
+        channel=state.channel,
+        channel_metadata=state.channel_metadata,
         ended_by=state.ended_by,
         end_reason=state.end_reason,
     )

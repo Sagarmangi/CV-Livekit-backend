@@ -68,10 +68,17 @@ class InboundCallAgent(Agent):
     this is a single LLM-driven flow with tool calls for consequential
     actions, rather than several Agent subclasses handed off between."""
 
-    def __init__(self, config: AgentConfig) -> None:
+    def __init__(self, config: AgentConfig, *, greeting_override: str | None = None) -> None:
         self._pronunciation_dictionary = config.agent.pronunciation_dictionary
         self._first_message_mode = config.agent.first_message_mode
         self._first_message_text = config.agent.first_message_text
+        # A web-widget call can open with its own line (agents.widget_config
+        # "greeting" -- see the 0027 migration) instead of the phone greeting,
+        # which tends to say things like "thanks for calling". Spoken verbatim,
+        # exactly as "agent_says_exact" would be; the phone path never sets it.
+        if greeting_override:
+            self._first_message_mode = "agent_says_exact"
+            self._first_message_text = greeting_override
         super().__init__(
             instructions=_build_instructions(config),
             tools=[
