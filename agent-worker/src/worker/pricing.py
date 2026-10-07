@@ -79,6 +79,18 @@ class Rates:
                 _rate("PRICE_LLM_GEMINI_FLASH_IN_PER_1M", 0.30),
                 _rate("PRICE_LLM_GEMINI_FLASH_OUT_PER_1M", 2.50),
             ),
+            # The current default text model (see settings.gemini_llm_model).
+            # Google's pricing page, Standard tier, checked 2026-10-08: $0.30
+            # input, $2.50 output, with thinking tokens billed as output. The
+            # full model name is the key on purpose: `_match` is a substring
+            # match, so a bare "gemini-3.5-flash" here would also price a
+            # future "gemini-3.5-flash-xyz", and nothing shorter is wanted.
+            # A model with no entry (gemini-3.8-flash, say) reports "no rate
+            # configured" rather than borrowing this one.
+            "gemini-3.5-flash-lite": (
+                _rate("PRICE_LLM_GEMINI_35_FLASH_LITE_IN_PER_1M", 0.30),
+                _rate("PRICE_LLM_GEMINI_35_FLASH_LITE_OUT_PER_1M", 2.50),
+            ),
             "llama-3.3-70b": (
                 _rate("PRICE_LLM_GROQ_IN_PER_1M", 0.59),
                 _rate("PRICE_LLM_GROQ_OUT_PER_1M", 0.79),
