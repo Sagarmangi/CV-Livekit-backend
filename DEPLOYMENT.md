@@ -397,6 +397,42 @@ Hand the key to the site. **Check:** a widget call shows `widget call for agent
 
 ## Deploying a change, from here on
 
+**Push to `main` and it deploys itself.** Two GitHub Actions workflows in
+`.github/workflows/`:
+
+- **CI** (`ci.yml`) runs on every push and pull request: installs the worker
+  on Python 3.12, checks `import worker.entrypoint`, runs `pytest` on
+  `agent-worker/tests/`, and applies every file in `supabase/migrations/` in
+  order to a fresh Postgres 16 — so a migration that doesn't apply never
+  reaches the VPS.
+- **Deploy backend** (`deploy.yml`) runs only when CI has **passed on a push to
+  `main`**. It SSHes to the VPS and runs the same
+  `/opt/codeora/deploy/deploy-backend.sh` described below, then waits up to
+  30 s for `registered worker` in the worker's journal (or, if that commit
+  restarted nothing, checks the service is still active). It fails loudly with
+  the last 40 log lines otherwise. Deploys are serialised and never cancelled
+  mid-run.
+
+One-time setup, in the repo's **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+|---|---|
+| `DEPLOY_HOST` | the VPS hostname or IP |
+| `DEPLOY_USER` | `deploy` — the same unprivileged user the script insists on |
+| `SSH_PRIVATE_KEY` | a key whose public half is in that user's `~/.ssh/authorized_keys`; make one just for this |
+| `SSH_KNOWN_HOSTS` | the output of `ssh-keyscan -H <vps>` run from a machine you trust |
+
+And on the VPS, so the verify step can read the journal without root:
+
+```bash
+sudo usermod -aG systemd-journal deploy
+```
+
+Nothing secret lives in the repo; the workflows read all four from GitHub.
+
+**The manual way still works and is the fallback** — if Actions is down, or
+you need to deploy a branch, run it yourself on the VPS:
+
 ```bash
 /opt/codeora/deploy/deploy-backend.sh
 ```

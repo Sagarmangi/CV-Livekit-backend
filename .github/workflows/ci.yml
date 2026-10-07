@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: ["**"]
+
+jobs:
+  worker:
+    name: Worker (import + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: agent-worker/pyproject.toml
+
+      - name: Install the worker and its test runner
+        run: pip install -e '.[dev]'
+
+      # The same check deploy-backend.sh relies on: if this fails, the worker
+      # would start and immediately die on the VPS.
+      - name: Import check
+        run: python -c "import worker.entrypoint"
+
+      - name: Tests
+        run: pytest -q
+
+  migrations:
+    name: Migrations apply on a fresh Postgres 16
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mig
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: mig
+    steps:
+      - uses: actions/checkout@v4
+
+      # 0002_grants.sql grants to Supabase's roles, which a plain Postgres
+      # image doesn't have.
+      - name: Create the Supabase roles
+        run: |
+          psql -v ON_ERROR_STOP=1 -c "create role anon nologin;" \
+               -c "create role authenticated nologin;" \
+               -c "create role service_role nologin;"
+
+      # Same order the migrator uses (zero-padded names sort numerically); each
+      # file in its own transaction, and the first error fails the job.
+      - name: Apply every migration in order
+        run: |
+          set -euo pipefail
+          cd supabase/migrations
+          n=0
+          for f in $(ls 0*.sql | sort); do
+            echo "::group::$f"
+            psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
+            echo "::endgroup::"
+            n=$((n + 1))
+          done
+          echo "applied $n migrations"
+
+      - name: Sanity-check the resulting schema
+        run: |
+          psql -v ON_ERROR_STOP=1 -At \
+            -c "select count(*) from agents" \
+            -c "select column_name from information_schema.columns where table_name = 'call_logs' and column_name in ('channel', 'is_test') order by 1"

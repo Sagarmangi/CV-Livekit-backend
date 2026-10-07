@@ -1,0 +1,89 @@
+name: Deploy backend
+
+# Runs only after CI has passed on a push to main. workflow_run (rather than a
+# second trigger on push) is what makes "after CI succeeds" true: this workflow
+# starts when the CI run finishes, and the job below checks how it finished.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+# One deploy at a time, and never cancel one that has started: deploy-backend.sh
+# migrates the database before restarting the worker, and a half-run of that is
+# the one state it is designed never to leave behind.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to the VPS
+    runs-on: ubuntu-latest
+    # A PR's CI run also completes "on main" from workflow_run's point of view
+    # when the PR targets main, so the event is checked as well as the result.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+    steps:
+      # No third-party action: the key is written straight into ~/.ssh with
+      # permissions set before anything is written, and known_hosts comes from
+      # a secret rather than ssh-keyscan, so the first connection is verified
+      # rather than trusted.
+      - name: Install the SSH key and known_hosts
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host vps
+            HostName ${DEPLOY_HOST}
+            User ${DEPLOY_USER}
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking yes
+            ConnectTimeout 20
+          EOF
+
+      - name: Run deploy-backend.sh on the VPS
+        id: deploy
+        run: |
+          set -euo pipefail
+          ssh vps '/opt/codeora/deploy/deploy-backend.sh' | tee deploy.log
+          # The script says this only when it actually restarted the worker; a
+          # docs-only commit restarts nothing, and the check below adapts.
+          if grep -q 'worker restarted' deploy.log; then
+            echo "restarted=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "restarted=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify the worker registered with LiveKit
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.deploy.outputs.restarted }}" = "true" ]; then
+            # A fresh worker logs "registered worker" once it has connected to
+            # LiveKit. Up to 30s: the systemd restart plus the SDK's connect.
+            for i in $(seq 1 15); do
+              if ssh vps 'journalctl -u codeora-worker -n 50 --no-pager | grep -q "registered worker"'; then
+                echo "worker registered"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "::error::worker did not log 'registered worker' within 30s"
+            ssh vps 'journalctl -u codeora-worker -n 40 --no-pager' || true
+            exit 1
+          else
+            # Nothing was restarted, so the last 50 lines may be hours of call
+            # logs with no registration line in them. Being up is the check.
+            ssh vps 'systemctl is-active --quiet codeora-worker' \
+              && echo "worker was not restarted and is still active" \
+              || { echo "::error::worker is not active"; ssh vps 'journalctl -u codeora-worker -n 40 --no-pager' || true; exit 1; }
+          fi

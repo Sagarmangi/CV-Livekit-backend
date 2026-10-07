@@ -27,6 +27,17 @@ dependencies = [
     "cloudinary>=1.40",
 ]
 
+[project.optional-dependencies]
+# `pip install -e '.[dev]'` -- what CI installs. Kept out of the runtime set so
+# the VPS doesn't carry a test runner.
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 packages = ["worker"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The tests import worker.entrypoint, which imports every LiveKit plugin; the
+# warnings those emit on import are theirs, not ours.
+filterwarnings = ["ignore::DeprecationWarning"]
